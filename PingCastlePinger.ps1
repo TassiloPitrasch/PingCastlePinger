@@ -7,9 +7,10 @@ param (
     [String]$Server = "*",
     [Switch]$SendAllChanges,
     [Switch]$SendEmptyReports,
-    [Switch]$Unbrag,
     [String]$Channel,
-    [Switch]$Mail
+    [Switch]$Mail,
+    [Switch]$Unbrag,
+    [Switch]$Script:Interactive 
 )
 
 
@@ -23,6 +24,10 @@ function Log {
     
     # Writing message to the log-file with the respective date and time and severity
     Add-Content $LogFile ("[{0} - [{1}]: {2}" -f ((Get-Date -Format "dd/MM/yyyy HH:mm:ss"), $Severities[$Severity], $LogMessage))
+    # If the tool is in interactive mode, the messages get written to the standard output as well
+    if ($Interactive -and ($Severity -lt 2)) {
+        Write-Host $LogMessage
+    }
     # Messages of severity Error get printed additionally and stop processing
     if ($Severity -eq 2) {
         throw $LogMessage
@@ -266,7 +271,7 @@ function ParseMessage() {
 
     # Preparing the header
     # Loading the 'stencil' file which is then filled with the actual values
-    $Header = Get-Content -Raw $HeaderFile
+    $Header = Get-Content -Raw "$HeaderFile"
 
     # Parsing the placeholders and their replacements 
     $HeaderReplacements = @{
@@ -360,7 +365,15 @@ function SendMessage() {
     }
 
     $TeamsMessageBody = ConvertTo-Json -Compress -InputObject $JSONBody
-    Invoke-RestMethod -Method post -ContentType 'Application/Json' -Body $TeamsMessageBody -Uri $URI
+    try {
+        $Response = Invoke-RestMethod -Method post -ContentType 'Application/Json' -Body $TeamsMessageBody -Uri $URI
+        if ($Response -ne 1) {
+            throw
+        }
+    }
+    catch [Exception] {
+        Log ("Sending Teams message failed: {0}" -f $Response) 2
+    }
 }
 
 # Sending a mail with the report(s) attached
@@ -373,21 +386,26 @@ function Mail() {
 
     # Loading the configuration
     $MailConfiguration = @{}
-    foreach ($Item in (Get-Content $MailFile)) {
+    foreach ($Item in (Get-Content "$MailFile")) {
         $Pair = $Item.ToLower().Split(":")
         $MailConfiguration[$Pair[0].Trim()] = $Pair[1].Trim()
     }
     # Setting subject and attachments
     $Subject = "PingCastle Report $Date"
-    $Attachments = @($MailFile)
+    $Attachments = $Reports
 
-    & Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments | Out-File -FilePath $LogFile -Append -Encoding Default 
+    try {
+        $Response = Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments
+    }
+    catch [Exception] {
+        Log ("Sending mail failed: {0}" -f $Response) 2
+    }
 }
 
 
 # Global variables
 # Teams Channel URI
-$Script:URI = "4"
+$Script:URI = ""
 if ($Channel) {
     $URI = $Channel
 }
@@ -420,14 +438,15 @@ $ArgSummary = If ($Args) {" with following non-default parameters: {0}" -f ($Arg
 Log ("PingCastlePinger started{0}" -f $ArgSummary)
 
 # Checking if necessary files and folders are available
-foreach ($File in @($PingCastleScript, $PingCastleUpdateScript, $HeaderFile, $FooterFile)) {
+foreach ($File in @("$PingCastleScript", "$PingCastleUpdateScript", "$HeaderFile", "$FooterFile")) {
     if (-not (Test-Path -Path $File -PathType Leaf)) {
         Log ("Missing file {0}" -f $File) 2
     }
 }
-foreach ($Folder in @($LastFolder)) {
-    if (-not (Test-Path -Path $Folder -PathType Container)) {
-        Log ("Missing folder {0}" -f $Folder) 2
+foreach ($Folder in @("$LastFolder")) {
+    if (-not (Test-Path -Path "$Folder" -PathType Container)) {
+        New-Item -Path "$Folder" -Type Directory
+        Log ("Created folder {0}" -f $Folder) 1
     }
 }
 
@@ -439,7 +458,7 @@ Log "Files ready."
 # Running PingCastle update
 Log "Trying to update PingCastle:"
 try {
-    & $PingCastleUpdateScript | Out-File -FilePath $LogFile -Append -Encoding Default 
+    & "$PingCastleUpdateScript" | Out-File -FilePath $LogFile -Append -Encoding Default 
 }
 catch [Exception] {
     Log "Could not run PingCastle update." 2
@@ -452,7 +471,7 @@ $Date = Get-Date -Format "dd/MM/yyyy HH:mm"
 # Executing a PingCastle scan for all Domains
 Log "Starting PingCastle scan:"
 try {
-    & $PingCastleScript --healthcheck --server * --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
+    & "$PingCastleScript" --healthcheck --server * --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
 }
 catch [Exception] {
     Log "Could not run PingCastle scan." 2
@@ -460,7 +479,7 @@ catch [Exception] {
 Log "PingCastle scan finished."
 
 # Detecting all reports/domains
-$Reports = dir $PingerHome | Where { $_.Name -match ".*\.xml"}
+$Reports = dir "$PingerHome" | Where { $_.Name -match ".*\.xml"}
 Log ("Following report(s) detected: {0}" -f ($Reports -join ", "))
 
 $Messages = [System.Collections.ArrayList]@()
@@ -481,7 +500,7 @@ foreach ($Report in $Reports) {
     Log "Successfully loaded current report."
 
     # Loading the previous results for this Domain
-    $LastFindings = @(LoadResults (Join-Path -Path $LastFolder -ChildPath $Report.Name))
+    $LastFindings = @(LoadResults (Join-Path -Path "$LastFolder" -ChildPath "$Report.Name"))
     if (-not $LastFindings) {
         Log ("Could not load previous report {0}" -f $Report) 1
         # Indicating it's the first scan for this Domain
@@ -512,7 +531,7 @@ foreach ($Report in $Reports) {
         Log ("No (relevant) changes detected for domain {0}" -f $Domain)
         # Archiving the report
         Log ("Archiving report...")
-        Move-Item -Path $Report.PSPath -Destination $LastFolder -Force
+        Move-Item -Path $Report.PSPath -Destination "$LastFolder" -Force
         Log ("Continuing.")
         continue
     }
@@ -528,12 +547,12 @@ foreach ($Report in $Reports) {
 
     # Parsing the Teams message for the current Domain
     Log ("Parsing message...")
-    $null = $Messages.Add((ParseMessage $HeaderFile $Domain $Date $CurrentScores $OverallScore $LastScores $LastOverallScore $NewFindings $ResolvedFindings $ChangedFindings $First))
+    $null = $Messages.Add((ParseMessage "$HeaderFile" $Domain $Date $CurrentScores $OverallScore $LastScores $LastOverallScore $NewFindings $ResolvedFindings $ChangedFindings $First))
     Log ("Successfully parsed message.")
     
     # Archiving the report (in both the folder containing the last reports and the folder containing the last sent reports)
     Log ("Archiving report...")
-    Move-Item -Path $Report.PSPath -Destination $LastFolder -Force
+    Move-Item -Path $Report.PSPath -Destination "$LastFolder" -Force
 
     Log ("Successfully examined report {0} for Domain {1}" -f ($Report, $Domain))
 }
@@ -565,7 +584,7 @@ foreach ($Message in $Messages) {
 # Preparing the footer if not deactivated
 if (-not $Unbrag) {
     # Loading the 'stencil' file which is then filled with the actual values
-    $Footer = Get-Content -Raw $FooterFile
+    $Footer = Get-Content -Raw "$FooterFile"
     # Greetings
     $Footer = $Footer.Replace("%Greeting%", (RobotTime))
     # Adding the footer to the last message chunk
@@ -587,7 +606,7 @@ for($i=1;$i -lt $MessageChunks.Count;$i++) {
 # This uploads the documents to Sharepoint as well as both applications are integrated
 if ($Mail) {
     Log "Sending report(s) as mail..."
-    Mail $MailFile $Date $Reports
+    Mail "$MailFile" $Date $Reports
 }
 
 
