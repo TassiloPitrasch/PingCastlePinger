@@ -5,7 +5,7 @@
 # -Brag: Remove greetings from footer
 param (
     [String]$Server = "*",
-        [String]$Channel,
+    [String]$Channel,
     [Switch]$SendAllChanges,
     [Switch]$SendEmptyReports,
     [Switch]$Mail,
@@ -16,7 +16,7 @@ param (
 
 # Logging
 function Log {
-    param(
+    param (
         [String]$LogMessage,
         # Default severity is Info
         [int]$Severity = 0
@@ -28,7 +28,7 @@ function Log {
     if ($Interactive -and ($Severity -lt 2)) {
         Write-Host $LogMessage
     }
-    # Messages of severity Error stop processing
+    # Messages of severity Error always get printed and stop processing
     if ($Severity -eq 2) {
         throw $LogMessage
     }
@@ -36,7 +36,7 @@ function Log {
 
 # Clearing log-file if necessary
 function RotateLog() {
-    param(
+    param (
         [String]$LogFile
     )
 
@@ -366,13 +366,10 @@ function SendMessage() {
 
     $TeamsMessageBody = ConvertTo-Json -Compress -InputObject $JSONBody
     try {
-        $Response = Invoke-RestMethod -Method post -ContentType 'Application/Json' -Body $TeamsMessageBody -Uri $URI
-        if ($Response -ne 1) {
-            throw
-        }
+        Invoke-RestMethod -Method post -ContentType 'Application/Json' -Body $TeamsMessageBody -Uri $URI
     }
     catch [Exception] {
-        Log ("Sending Teams message failed: {0}" -f $Response) 2
+        Log ("Sending Teams message failed: {0}" -f $_.ToString()) 2
     }
 }
 
@@ -395,10 +392,10 @@ function Mail() {
     $Attachments = $Reports
 
     try {
-        $Response = Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments
     }
     catch [Exception] {
-        Log ("Sending mail failed: {0}" -f $Response) 2
+        Log ("Sending mail failed: {0}" -f $_.ToString()) 2
     }
 }
 
@@ -433,6 +430,7 @@ $FooterFile = Join-Path -Path "$PingerResources" -ChildPath "Footer.html"
 $MailFile = Join-Path -Path "$PingerResources" -ChildPath "mail.conf"
 $Script:Logfile = Join-Path -Path "$PingerResources" -ChildPath "log.txt"
 
+# Logging the parameters
 $Args = $PsBoundParameters.GetEnumerator() | ForEach-Object {"{0}: {1}" -f ($_.Key, $_.Value)}
 $ArgSummary = If ($Args) {" with following non-default parameters: {0}" -f ($Args -join "; ")} Else {"."}
 Log ("PingCastlePinger started{0}" -f $ArgSummary)
@@ -440,7 +438,7 @@ Log ("PingCastlePinger started{0}" -f $ArgSummary)
 # Checking if necessary files and folders are available
 foreach ($File in @("$PingCastleScript", "$PingCastleUpdateScript", "$HeaderFile", "$FooterFile")) {
     if (-not (Test-Path -Path $File -PathType Leaf)) {
-        Log ("Missing file {0}" -f $File) 2
+        Log ("Missing file: {0}" -f $File) 2
     }
 }
 foreach ($Folder in @("$LastFolder")) {
@@ -459,11 +457,8 @@ try {
     & "$PingCastleUpdateScript" | Out-File -FilePath $LogFile -Append -Encoding Default 
 }
 catch [Exception] {
-    Log "Could not run PingCastle update." 2
+    Log ("Could not run PingCastle update: {0}" -f $_.ToString()) 2
 }
-
-# Current date and time
-$Date = Get-Date -Format "dd/MM/yyyy HH:mm"
 
 # Executing a PingCastle scan for all Domains
 Log "Starting PingCastle scan:"
@@ -471,8 +466,11 @@ try {
     & "$PingCastleScript" --healthcheck --server * --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
 }
 catch [Exception] {
-    Log "Could not run PingCastle scan." 2
+    Log ("Could not run PingCastle scan: {0}" -f $_.ToString()) 2
 }
+
+# Current date and time
+$Date = Get-Date -Format "dd/MM/yyyy HH:mm"
 
 # Detecting all reports/domains
 $Reports = dir "$PingerHome" | Where { $_.Name -match ".*\.xml"}
