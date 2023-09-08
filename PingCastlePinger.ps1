@@ -470,7 +470,7 @@ try {
 catch [Exception] {
     Log ("Could not run PingCastle update: {0}" -f $_.ToString()) 2
 }
-return
+
 # Executing a PingCastle scan for all Domains
 Log "Running PingCastle scan:"
 try {
@@ -569,7 +569,7 @@ if ($Mail) {
 
 # If no notification is to be send, the tool is terminated
 if ($Messages.Count -eq 0 -and -not $SendEmpty) {
-    Log "No (relvant) changes detected at all, skipping notification."
+    Log "No (relevant) changes detected at all, skipping notification."
     Log "PingCastlePinger finished."
     Exit 0
 }
