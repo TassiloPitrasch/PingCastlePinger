@@ -51,6 +51,16 @@ function RotateLog() {
     }
 }
 
+# Handling the output of sub-processes
+function LogSubOutput() {
+    param(
+        [Parameter(ValueFromPipeline=$true)]$PipedIn
+    )
+    process {
+        Log $_
+  }
+}
+
 
 # Class: Finding, resembles a vulnerability detected by PingCastle
 Class Finding {
@@ -61,7 +71,7 @@ Class Finding {
     [String]$OldRationale = ""
     [String]$Details = ""
     [int]$Points = 0
-    # Oldpoints is used for changed findings only
+    # OldPoints is used for changed findings only
     [int]$OldPoints = 0
 }
 
@@ -161,7 +171,7 @@ function GetChangedFindings() {
     return $ChangedFindings
 }
 
-# Formating an integer to a signed string
+# Formatting an integer to a signed string
 function Absolut() {
     param (
         [int]$In
@@ -186,7 +196,7 @@ function CalculateScores() {
     return $Scores
 }
 
-# Preparing the colored circles indicating the state of security overall and of the individual categories
+# Preparing the coloured circles indicating the state of security overall and of the individual categories
 function ParseCircle() {
     param (
         [int]$Value,
@@ -202,7 +212,7 @@ function ParseCircle() {
     return $Circles[$Ratio]
 }
 
-# Preparing the coloring of the vulnerability scores of the findings
+# Preparing the colouring of the vulnerability scores of the findings
 function ParsePoints() {
     param (
         [int]$Points,
@@ -219,7 +229,7 @@ function ParsePoints() {
     else { return "<span style=`"color: red`">{0}</span>" -f (Absolut $Points) }
 }
 
-# Parsing the difference view for changed fiindings
+# Parsing the difference view for changed findings
 function ParseDiff() {
     param (
         [Finding]$ChangedFinding
@@ -347,7 +357,6 @@ function ParseMessage() {
     return $Header + $VulnerabilitiesText
 }
 
-
 # Sending a message to Teams via a Webhook
 function SendMessage() {
     param (
@@ -417,7 +426,7 @@ $Script:First = $false
 $Script:Severities = @("INFO", "WARNING", "ERROR")
 # Vulnerability categories
 $Script:Categories = @("StaleObjects", "PrivilegedAccounts", "Trusts", "Anomalies")
-# Colored circles
+# Coloured circles
 $Script:Circles = @("&#x1F7E2;", "&#x1F7E1;", "&#x1F7E0;", "&#x1F534;")
 
 # Parsing Paths
@@ -449,22 +458,23 @@ foreach ($Folder in @("$LastFolder")) {
     }
 }
 
-# Roting Log if necessary
+# Rotating Log if necessary
 RotateLog $LogFile
 
 # Running PingCastle update
 Log "Trying to update PingCastle:"
 try {
-    & "$PingCastleUpdateScript" | Out-File -FilePath $LogFile -Append -Encoding Default 
+    & "$PingCastleUpdateScript" | LogSubOutput
+
 }
 catch [Exception] {
     Log ("Could not run PingCastle update: {0}" -f $_.ToString()) 2
 }
-
+return
 # Executing a PingCastle scan for all Domains
-Log "Starting PingCastle scan:"
+Log "Running PingCastle scan:"
 try {
-    & "$PingCastleScript" --healthcheck --server $Server --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
+    & "$PingCastleScript" --healthcheck --server $Server --level Full | LogSubOutput
 }
 catch [Exception] {
     Log ("Could not run PingCastle scan: {0}" -f $_.ToString()) 2
@@ -515,7 +525,7 @@ foreach ($Report in $Reports) {
     $PersistentFindings = $CurrentFindings | ? {$_ -notin $NewFindings}
     # The Points and Rationales of these are compared to the ones of the persistent findings to catch minor changes
     $ChangedFindings = GetChangedFindings $PersistentFindings $LastFindings
-    Log ("Found {0} vulnerabilities for which the Points changed and {1} vulnerabilites for which the Rationale changed." -f (($ChangedFindings["Points"]).Count, ($ChangedFindings["Rationale"]).Count))
+    Log ("Found {0} vulnerabilities for which the Points changed and {1} vulnerabilities for which the Rationale changed." -f (($ChangedFindings["Points"]).Count, ($ChangedFindings["Rationale"]).Count))
 
     # Checking if a notification needs to prepared
     # Changes to the Points/scores are always posted, changes to the findings' Rationales only if activated
