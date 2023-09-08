@@ -5,12 +5,12 @@
 # -Brag: Remove greetings from footer
 param (
     [String]$Server = "*",
+        [String]$Channel,
     [Switch]$SendAllChanges,
     [Switch]$SendEmptyReports,
-    [String]$Channel,
     [Switch]$Mail,
     [Switch]$Unbrag,
-    [Switch]$Script:Interactive 
+    [Switch]$Interactive 
 )
 
 
@@ -28,7 +28,7 @@ function Log {
     if ($Interactive -and ($Severity -lt 2)) {
         Write-Host $LogMessage
     }
-    # Messages of severity Error get printed additionally and stop processing
+    # Messages of severity Error stop processing
     if ($Severity -eq 2) {
         throw $LogMessage
     }
@@ -453,8 +453,6 @@ foreach ($Folder in @("$LastFolder")) {
 # Roting Log if necessary
 RotateLog $LogFile
 
-Log "Files ready."
-
 # Running PingCastle update
 Log "Trying to update PingCastle:"
 try {
@@ -463,7 +461,6 @@ try {
 catch [Exception] {
     Log "Could not run PingCastle update." 2
 }
-Log "PingCastle update finished."
 
 # Current date and time
 $Date = Get-Date -Format "dd/MM/yyyy HH:mm"
@@ -476,7 +473,6 @@ try {
 catch [Exception] {
     Log "Could not run PingCastle scan." 2
 }
-Log "PingCastle scan finished."
 
 # Detecting all reports/domains
 $Reports = dir "$PingerHome" | Where { $_.Name -match ".*\.xml"}
@@ -497,28 +493,25 @@ foreach ($Report in $Reports) {
     if (-not $CurrentFindings) {
         Log ("Could not load current report {0}" -f $Report) 2
     }
-    Log "Successfully loaded current report."
 
     # Loading the previous results for this Domain
     $LastFindings = @(LoadResults (Join-Path -Path "$LastFolder" -ChildPath "$Report.Name"))
     if (-not $LastFindings) {
-        Log ("Could not load previous report {0}" -f $Report) 1
+        Log ("Could not load previous report {0} for this domain." -f $Report) 1
         # Indicating it's the first scan for this Domain
         $First = $true
         $LastFindings = @()
     }
     else {
-        Log "Successfully loaded previous report."
+        Log "Successfully loaded previous report for this domain."
     }
 
     # Parsing the new and the now resolved findings
-    Log "Parsing new and resolved findings..."
     $NewFindings = @(GetNewFindings $CurrentFindings $LastFindings)
     $ResolvedFindings = @(GetResolvedFindings $CurrentFindings $LastFindings)
     Log ("Found {0} new and {1} resolved vulnerabilities." -f ($NewFindings.Count, $ResolvedFindings.Count))
 
     # Parsing changed findings
-    Log ("Checking other findings for changes...") 
     # Getting the persistent findings
     $PersistentFindings = $CurrentFindings | ? {$_ -notin $NewFindings}
     # The Points and Rationales of these are compared to the ones of the persistent findings to catch minor changes
@@ -543,12 +536,10 @@ foreach ($Report in $Reports) {
     # Calculating the overall scores
     $OverallScore = ($CurrentScores.Values | measure-object -sum).sum
     $LastOverallScore = ($LastScores.Values | measure-object -sum).sum
-    Log ("Successfully calculated scores.") 
 
     # Parsing the Teams message for the current Domain
     Log ("Parsing message...")
     $null = $Messages.Add((ParseMessage "$HeaderFile" $Domain $Date $CurrentScores $OverallScore $LastScores $LastOverallScore $NewFindings $ResolvedFindings $ChangedFindings $First))
-    Log ("Successfully parsed message.")
     
     # Archiving the report (in both the folder containing the last reports and the folder containing the last sent reports)
     Log ("Archiving report...")
