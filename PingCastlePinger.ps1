@@ -387,9 +387,10 @@ function Mail() {
         $Pair = $Item.ToLower().Split(":")
         $MailConfiguration[$Pair[0].Trim()] = $Pair[1].Trim()
     }
+
     # Setting subject and attachments
     $Subject = "PingCastle Report $Date"
-    $Attachments = $Reports
+    $Attachments = @($Reports | ForEach-Object { $_.ArchivePath })
 
     try {
         Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments
@@ -463,7 +464,7 @@ catch [Exception] {
 # Executing a PingCastle scan for all Domains
 Log "Starting PingCastle scan:"
 try {
-    & "$PingCastleScript" --healthcheck --server * --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
+    & "$PingCastleScript" --healthcheck --server $Server --level Full | Out-File -FilePath $LogFile -Append -Encoding Default
 }
 catch [Exception] {
     Log ("Could not run PingCastle scan: {0}" -f $_.ToString()) 2
@@ -522,6 +523,7 @@ foreach ($Report in $Reports) {
         Log ("No (relevant) changes detected for domain {0}" -f $Domain)
         # Archiving the report
         Log ("Archiving report...")
+        $Report | Add-Member -NotePropertyName ArchivePath -NotePropertyValue (Join-Path -Path "$LastFolder" -ChildPath $Report.Name)
         Move-Item -Path $Report.PSPath -Destination "$LastFolder" -Force
         Log ("Continuing.")
         continue
@@ -541,11 +543,19 @@ foreach ($Report in $Reports) {
     
     # Archiving the report (in both the folder containing the last reports and the folder containing the last sent reports)
     Log ("Archiving report...")
+    # The attribute ArchivePath contains the path of the report in the archive
+    $Report | Add-Member -NotePropertyName ArchivePath -NotePropertyValue (Join-Path -Path "$LastFolder" -ChildPath $Report.Name)
     Move-Item -Path $Report.PSPath -Destination "$LastFolder" -Force
 
     Log ("Successfully examined report {0} for Domain {1}" -f ($Report, $Domain))
 }
 Log ("Successfully examined all reports.")
+
+# Sending the report(s) to the as a mail
+if ($Mail) {
+    Log "Sending report(s) as mail..."
+    Mail "$MailFile" $Date $Reports
+}
 
 # If no notification is to be send, the tool is terminated
 if ($Messages.Count -eq 0 -and -not $SendEmpty) {
@@ -590,13 +600,5 @@ for($i=1;$i -lt $MessageChunks.Count;$i++) {
     # No title for the consecutive messages
     SendMessage ("<h4>{0}/{1}</h4>{2}" -f (($i + 1), $MessageChunks.Count, $MessageChunks[$i]))
 }
-
-# Sending the report(s) to the Teams Channel as a mail
-# This uploads the documents to Sharepoint as well as both applications are integrated
-if ($Mail) {
-    Log "Sending report(s) as mail..."
-    Mail "$MailFile" $Date $Reports
-}
-
 
 Log "PingCastlePinger finished."
