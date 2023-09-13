@@ -504,7 +504,7 @@ foreach ($Report in $Reports) {
     }
 
     # Loading the previous results for this Domain
-    $LastFindings = @(LoadResults (Join-Path -Path "$LastFolder" -ChildPath "$Report.Name"))
+    $LastFindings = @(LoadResults (Join-Path -Path "$LastFolder" -ChildPath $Report.Name))
     if (-not $LastFindings) {
         Log ("Could not load previous report {0} for this domain." -f $Report) 1
         # Indicating it's the first scan for this Domain
