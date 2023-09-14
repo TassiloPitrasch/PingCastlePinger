@@ -2,7 +2,7 @@
 # -Server: AD Domain to be scanned
 # -SendChanges: Notify about changed findings if no new or resolved ones are detected
 # -SendEmptyReports: Allow for sending empty notifications
-# -Brag: Remove greetings from footer
+# -Unbrag: Remove greetings from footer
 param (
     [String]$Server = "*",
     [String]$Channel,
@@ -23,7 +23,7 @@ function Log {
     )
     
     # Writing message to the log-file with the respective date and time and severity
-    Add-Content $LogFile ("[{0} - [{1}]: {2}" -f ((Get-Date -Format "dd/MM/yyyy HH:mm:ss"), $Severities[$Severity], $LogMessage))
+    Add-Content $LogFile ("{0} - [{1}]: {2}" -f ((Get-Date -Format "dd/MM/yyyy HH:mm:ss"), $Severities[$Severity], $LogMessage))
     # If the tool is in interactive mode, the messages get written to the standard output as well
     if ($Interactive -and ($Severity -lt 2)) {
         Write-Host $LogMessage
