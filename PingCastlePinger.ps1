@@ -400,9 +400,14 @@ function Mail() {
     # Setting subject and attachments
     $Subject = "PingCastle Report $Date"
     $Attachments = @($Reports | ForEach-Object { $_.ArchivePath })
-
     try {
-        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -SmtpServer $MailConfiguration["server"] -Attachments $Attachments
+        # Getting the credentials
+        $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
+        $Password = ConvertTo-SecureString -String $(if (-not $MailConfiguration["password"]) {"None"} else {$MailConfiguration["password"]}) -AsPlainText -Force
+        $Credentials = New-Object System.Management.Automation.PSCredential($Username,$Password)
+
+        # Sending the mail
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -credential $Credentials -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Attachments $Attachments
     }
     catch [Exception] {
         Log ("Sending mail failed: {0}" -f $_.ToString()) 2
@@ -439,6 +444,12 @@ $HeaderFile = Join-Path -Path "$PingerResources" -ChildPath "Header.html"
 $FooterFile = Join-Path -Path "$PingerResources" -ChildPath "Footer.html"
 $MailFile = Join-Path -Path "$PingerResources" -ChildPath "mail.conf"
 $Script:Logfile = Join-Path -Path "$PingerResources" -ChildPath "log.txt"
+
+#PingCastle writes its output to the installation directory; to prevent errors, the entire script is executed there
+if ((Get-Location) -ne $PingerHome) {
+    Set-Location $PingerHome
+    Log "Changed to the installation directory of PingCastle." 1
+}
 
 # Logging the parameters
 $Args = $PsBoundParameters.GetEnumerator() | ForEach-Object {"{0}: {1}" -f ($_.Key, $_.Value)}
@@ -529,7 +540,7 @@ foreach ($Report in $Reports) {
 
     # Checking if a notification needs to prepared
     # Changes to the Points/scores are always posted, changes to the findings' Rationales only if activated
-    if (($NewFindings.Count + $ResolvedFindings.Count + ($ChangedFindings["Points"]).Count) -eq 0 -and -not $SendAllChanges) {
+    if ((($NewFindings.Count + $ResolvedFindings.Count + ($ChangedFindings["Points"]).Count)) -eq 0 -and (-not ($ChangedFindings["Rationale"]).Count -gt 0 -and $SendAllChanges)) {
         Log ("No (relevant) changes detected for domain {0}" -f $Domain)
         # Archiving the report
         Log ("Archiving report...")
@@ -561,12 +572,6 @@ foreach ($Report in $Reports) {
 }
 Log ("Successfully examined all reports.")
 
-# Sending the report(s) to the as a mail
-if ($Mail) {
-    Log "Sending report(s) as mail..."
-    Mail "$MailFile" $Date $Reports
-}
-
 # If no notification is to be send, the tool is terminated
 if ($Messages.Count -eq 0 -and -not $SendEmpty) {
     Log "No (relevant) changes detected at all, skipping notification."
@@ -576,7 +581,13 @@ if ($Messages.Count -eq 0 -and -not $SendEmpty) {
 # Notification if no (relevant) changes were detected
 elseif ($Messages.Count -eq 0) {
     $Title = "&#x1F2755 PingCastle didn't detect any changes in the Active Directory Security! &#x1F2755"
-    $Messages[0] = "<b> This doesn't mean your Active Directory is secure, there were only no changes to its security detected! Stay alert! </b>"
+    $Messages[0] = "<b> This doesn't mean your Active Directory is secure, but there were no changes to its security detected! Stay alert! </b>"
+}
+
+# Sending the report(s) attached to a mail (if activated and reports are available)
+if ($Mail -and $Reports) {
+    Log "Sending report(s) as mail..."
+    Mail "$MailFile" $Date $Reports
 }
 
 # Chunking the message if it's bigger than 13.5 KB, as Teams can't handle arbitrary large posts
