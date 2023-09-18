@@ -398,7 +398,7 @@ function Mail() {
     }
 
     # Setting subject and attachments
-    $Subject = "PingCastle Report $Date"
+    $Subject = "PingCastle Report(s) $Date"
     $Attachments = @($Reports | ForEach-Object { $_.ArchivePath })
     try {
         # Getting the credentials
