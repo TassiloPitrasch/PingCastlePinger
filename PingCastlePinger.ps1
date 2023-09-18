@@ -540,7 +540,7 @@ foreach ($Report in $Reports) {
 
     # Checking if a notification needs to prepared
     # Changes to the Points/scores are always posted, changes to the findings' Rationales only if activated
-    if ((($NewFindings.Count + $ResolvedFindings.Count + ($ChangedFindings["Points"]).Count)) -eq 0 -and (-not ($ChangedFindings["Rationale"]).Count -gt 0 -and $SendAllChanges)) {
+    if ((($NewFindings.Count + $ResolvedFindings.Count + ($ChangedFindings["Points"]).Count)) -eq 0 -and (-not (($ChangedFindings["Rationale"]).Count -gt 0 -and $SendAllChanges))) {
         Log ("No (relevant) changes detected for domain {0}" -f $Domain)
         # Archiving the report
         Log ("Archiving report...")
