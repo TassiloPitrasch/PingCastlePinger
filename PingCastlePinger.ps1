@@ -1,13 +1,15 @@
 ﻿# Argument handling
 # -Server: AD Domain to be scanned
-# -SendChanges: Notify about changed findings if no new or resolved ones are detected
-# -SendEmptyReports: Allow for sending empty notifications
+# -SendAllChanges: Notify about changed findings if no new or resolved ones are detected
+# -SendHTMLAlways: HTML reports are sent even if no relevant changes are detected
+# -SendEmptyNotifications: Allow for sending empty notifications
 # -Unbrag: Remove greetings from footer
 param (
     [String]$Server = "*",
     [String]$Channel,
     [Switch]$SendAllChanges,
-    [Switch]$SendEmptyReports,
+    [Switch]$SendHTMLAlways,
+    [Switch]$SendEmptyNotifications,
     [Switch]$Mail,
     [Switch]$Unbrag,
     [Switch]$Interactive 
@@ -387,7 +389,7 @@ function Mail() {
     param ( 
         [String]$MailFile,
         [String]$Date,
-        [Array]$Reports
+        [Array]$HTMLReports
     )
 
     # Loading the configuration
@@ -397,9 +399,7 @@ function Mail() {
         $MailConfiguration[$Pair[0].Trim()] = $Pair[1].Trim()
     }
 
-    # Setting subject and attachments
     $Subject = "PingCastle Report(s) $Date"
-    $Attachments = @($Reports | ForEach-Object { $_.ArchivePath })
     try {
         # Getting the credentials
         $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
@@ -407,7 +407,7 @@ function Mail() {
         $Credentials = New-Object System.Management.Automation.PSCredential($Username,$Password)
 
         # Sending the mail
-        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -credential $Credentials -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Attachments $Attachments
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -credential $Credentials -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Attachments $HTMLReports
     }
     catch [Exception] {
         Log ("Sending mail failed: {0}" -f $_.ToString()) 2
@@ -498,6 +498,7 @@ $Date = Get-Date -Format "dd/MM/yyyy HH:mm"
 $Reports = dir "$PingerHome" | Where { $_.Name -match ".*\.xml"}
 Log ("Following report(s) detected: {0}" -f ($Reports -join ", "))
 
+$HTMLReports = [System.Collections.ArrayList]@()
 $Messages = [System.Collections.ArrayList]@()
 # Iterating through the reports/Domains
 foreach ($Report in $Reports) {
@@ -507,6 +508,16 @@ foreach ($Report in $Reports) {
 
     $Domain = $Report.Name | % {$_ -match "ad_hc_([A-Za-z0-9_.-]+)\.xml" > $null; $matches[1]}
     Log ("Domain: {0}" -f $Domain)
+
+    # Getting the respective HTML report
+    try {
+        $HTMLReport = Get-Item ($Report.Name -replace "(\.xml)(?=$)", ".html") -ErrorAction Stop
+    }
+    catch {
+        Log ("HTML version of report {0} not available, skipping examination." -f $Report) 1
+        continue
+    }
+    $null = $HTMLReports.Add($HTMLReport.FullName)
     
     # Loading the current results for this Domain
     $CurrentFindings = @(LoadResults $Report.PSPath)
@@ -572,8 +583,19 @@ foreach ($Report in $Reports) {
 }
 Log ("Successfully examined all reports.")
 
+# Sending the report(s) attached to a mail (if activated)
+if ($Mail) {
+    # Checking if reports need to be sent
+    if (-not ($Messages -or $SendHTMLAlways) -or -not $HTMLReports) {
+        Log "Skipping mailing."
+        continue
+    }
+    Log "Sending report(s) as mail..."
+    Mail "$MailFile" $Date $HTMLReports
+}
+
 # If no notification is to be send, the tool is terminated
-if ($Messages.Count -eq 0 -and -not $SendEmpty) {
+if ($Messages.Count -eq 0 -and -not $SendEmptyNotifications) {
     Log "No (relevant) changes detected at all, skipping notification."
     Log "PingCastlePinger finished."
     Exit 0
@@ -582,12 +604,6 @@ if ($Messages.Count -eq 0 -and -not $SendEmpty) {
 elseif ($Messages.Count -eq 0) {
     $Title = "&#x1F2755 PingCastle didn't detect any changes in the Active Directory Security! &#x1F2755"
     $Messages[0] = "<b> This doesn't mean your Active Directory is secure, but there were no changes to its security detected! Stay alert! </b>"
-}
-
-# Sending the report(s) attached to a mail (if activated and reports are available)
-if ($Mail -and $Reports) {
-    Log "Sending report(s) as mail..."
-    Mail "$MailFile" $Date $Reports
 }
 
 # Chunking the message if it's bigger than 13.5 KB, as Teams can't handle arbitrary large posts
