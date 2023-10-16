@@ -245,13 +245,22 @@ function ParseDiff() {
     $News = @($Diff | Where { $_.SideIndicator -eq "=>" })
     $Olds = @($Diff | Where { $_.SideIndicator -eq "<=" })
 
-    $Summary = $ChangedFinding.Rationale
-    for($i=0;$i-lt $News.Count;$i++) {
-        $Summary = $Summary.Replace($News[$i], "<b>{0} (used to be {1})</b>" -f ($News[$i], $Olds[$i]))
+    # Regex containing each change in the Rationale, joined by the OR-operator
+    $RegexChanges = ($News | ForEach-Object {[regex]::Escape($_)}) -join "|"
+    # The current Rationale is split by each change to retrieve an array of only the constant pieces
+    # Each element of this array (besides the last) is followed by an altered detail,
+    # which gets parsed from the difference of the new and the old Rationale
+    $Fragments = [regex]::split($ChangedFinding.Rationale, $RegexChanges)
+    $DiffRationale = [System.Collections.ArrayList]@()
+    for($i=0;$i -lt ($Fragments.Count - 1);$i++) {
+        $null = $DiffRationale.Add($Fragments[$i])
+        $null = $DiffRationale.Add("<b>{0} (used to be {1})</b>" -f ($News[$i], $Olds[$i]))
     }
+    # Appending the last element
+    $null = $DiffRationale.Add($Fragments[$Fragments.Count - 1])
 
-    return $Summary
-   
+    # Concatenating the array and returning
+    return ($DiffRationale -join "")
 }
 
 # Very polite indeed
@@ -476,7 +485,6 @@ RotateLog $LogFile
 Log "Trying to update PingCastle:"
 try {
     & "$PingCastleUpdateScript" | LogSubOutput
-
 }
 catch [Exception] {
     Log ("Could not run PingCastle update: {0}" -f $_.ToString()) 2
