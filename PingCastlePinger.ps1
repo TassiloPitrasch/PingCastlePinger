@@ -1,8 +1,10 @@
-﻿# Argument handling
+# Argument handling
 # -Server: AD Domain to be scanned
 # -SendAllChanges: Notify about changed findings if no new or resolved ones are detected
 # -SendHTMLAlways: HTML reports are sent even if no relevant changes are detected
 # -SendEmptyNotifications: Allow for sending empty notifications
+# -Mail: Send mails
+# -Interactive: Print log to STDOUT for easier debugging 
 # -Unbrag: Remove greetings from footer
 param (
     [String]$Server = "*",
@@ -393,30 +395,56 @@ function SendMessage() {
     }
 }
 
-# Sending a mail with the report(s) attached
-function Mail() {
+# Loading the mail configuration
+function LoadMailConfiguration() {
     param ( 
-        [String]$MailFile,
-        [String]$Date,
-        [Array]$HTMLReports
+        [String]$MailFile
     )
 
-    # Loading the configuration
+    # Loading the basic settings
     $MailConfiguration = @{}
     foreach ($Item in (Get-Content "$MailFile")) {
         $Pair = $Item.ToLower().Split(":")
         $MailConfiguration[$Pair[0].Trim()] = $Pair[1].Trim()
     }
+    
+    # Getting the credentials
+    $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
+    $Password = ConvertTo-SecureString -String $(if (-not $MailConfiguration["password"]) {"None"} else {$MailConfiguration["password"]}) -AsPlainText -Force
+    $MailConfiguration["credentials"] = New-Object System.Management.Automation.PSCredential($Username,$Password)
 
-    $Subject = "PingCastle Report(s) $Date"
+    return $MailConfiguration
+}
+
+# Sending a basic mail
+function MailNotification() {
+    param ( 
+        [Hashtable]$MailConfiguration,
+        [String]$Issue,
+        [String]$Body
+    )
+
+    # Sending the mail
     try {
-        # Getting the credentials
-        $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
-        $Password = ConvertTo-SecureString -String $(if (-not $MailConfiguration["password"]) {"None"} else {$MailConfiguration["password"]}) -AsPlainText -Force
-        $Credentials = New-Object System.Management.Automation.PSCredential($Username,$Password)
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Issue" -credential $MailConfiguration["credentials"] -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Body "$Body"
+    }
+    catch [Exception] {
+        Log ("Sending mail failed: {0}" -f $_.ToString()) 2
+    }
 
-        # Sending the mail
-        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Subject" -credential $Credentials -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Attachments $HTMLReports
+}
+
+# Sending a mail with the report(s) attached
+function MailReports() {
+    param ( 
+        [Hashtable]$MailSettings,
+        [String]$Date,
+        [Array]$HTMLReports
+    )
+
+    # Sending the mail
+    try {
+        Send-MailMessage -From $MailSettings["sender"] -To $MailSettings["recipient"] -Subject "PingCastle Report(s) $Date" -credential $MailSettings["credentials"] -SmtpServer $MailSettings["server"] -Port $MailSettings["port"] -Attachments $HTMLReports
     }
     catch [Exception] {
         Log ("Sending mail failed: {0}" -f $_.ToString()) 2
@@ -455,9 +483,17 @@ $MailFile = Join-Path -Path "$PingerResources" -ChildPath "mail.conf"
 $Script:Logfile = Join-Path -Path "$PingerResources" -ChildPath "log.txt"
 
 #PingCastle writes its output to the installation directory; to prevent errors, the entire script is executed there
-if ((Get-Location) -ne $PingerHome) {
+if ((Get-Location) -ne "$PingerHome") {
     Set-Location $PingerHome
     Log "Changed to the installation directory of PingCastle." 1
+}
+
+# Loading the mail settings (if mailing is activated and the respective configuration-file is found)
+if ($Mail -and (Test-Path "$MailFile" -PathType Leaf)) {
+    $MailConfiguration = LoadMailConfiguration "$MailFile"
+}
+elseif ($Mail -and -not (Test-Path "$MailFile" -PathType Leaf)) {
+    Log "Mail activated, but configuration-file missing." 1
 }
 
 # Logging the parameters
@@ -467,7 +503,7 @@ Log ("PingCastlePinger started{0}" -f $ArgSummary)
 
 # Checking if necessary files and folders are available
 foreach ($File in @("$PingCastleScript", "$PingCastleUpdateScript", "$HeaderFile", "$FooterFile")) {
-    if (-not (Test-Path -Path $File -PathType Leaf)) {
+    if (-not (Test-Path -Path "$File" -PathType Leaf)) {
         Log ("Missing file: {0}" -f $File) 2
     }
 }
@@ -487,7 +523,16 @@ try {
     & "$PingCastleUpdateScript" | LogSubOutput
 }
 catch [Exception] {
-    Log ("Could not run PingCastle update: {0}" -f $_.ToString()) 2
+    $Message = "Could not run PingCastle update: {0}" -f $_.ToString()
+    if ($MailConfiguration) { MailNotification $MailConfiguration "PingCastle update failed!" "$Message" }
+    Log "$Message" 2
+}
+
+# License test, as expiry will not fail the scan
+$LicenseTest = & "$PingCastleScript" --version
+if ($LicenseTest -match "^The program is unsupported since.*") {
+    if ($MailConfiguration) { MailNotification $MailConfiguration "PingCastle license expired!" "$LicenseTest" }
+    Log ("PingCastle license expired: {0}" -f "$LicenseTest")  2
 }
 
 # Executing a PingCastle scan for all Domains
@@ -496,7 +541,9 @@ try {
     & "$PingCastleScript" --healthcheck --server $Server --level Full | LogSubOutput
 }
 catch [Exception] {
-    Log ("Could not run PingCastle scan: {0}" -f $_.ToString()) 2
+    $Message = "Could not run PingCastle scan: {0}" -f $_.ToString()
+    if ($MailConfiguration) { MailNotification $MailConfiguration "PingCastle execution failed!" "$Message" }
+    Log "$Message" 2
 }
 
 # Current date and time
@@ -591,15 +638,15 @@ foreach ($Report in $Reports) {
 }
 Log ("Successfully examined all reports.")
 
-# Sending the report(s) attached to a mail (if activated)
-if ($Mail) {
+# Sending the report(s) attached to a mail (if available)
+if ($MailConfiguration) {
     # Checking if reports need to be sent
     if (-not ($Messages -or $SendHTMLAlways) -or -not $HTMLReports) {
         Log "Skipping mailing."
         continue
     }
     Log "Sending report(s) as mail..."
-    Mail "$MailFile" $Date $HTMLReports
+    MailReports $MailConfiguration $Date $HTMLReports
 }
 
 # If no notification is to be send, the tool is terminated
@@ -639,7 +686,7 @@ if (-not $Unbrag) {
 # Sending the chunks one-by-one
 Log ("Sending {0} message(s)..." -f $MessageChunks.Count)
 # The first chunk is sent with a title for the post
-If (-not $Title) {$Title = "&#x1F6A8 PingCastle detected changes in the Active Directory Security! &#x1F6A8"}
+If (-not $Title) {$Title = "PingCastle detected changes in the Active Directory Security!"}
 SendMessage ("<h4>1/{0}</h4>{1}" -f ($MessageChunks.Count, $MessageChunks[0])) $Title
 for($i=1;$i -lt $MessageChunks.Count;$i++) {
     # No title for the consecutive messages
