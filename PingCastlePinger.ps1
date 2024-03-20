@@ -4,7 +4,7 @@
 # -SendHTMLAlways: HTML reports are sent even if no relevant changes are detected
 # -SendEmptyNotifications: Allow for sending empty notifications
 # -Mail: Send mails
-# -Interactive: Print log to STDOUT for easier debugging 
+# -Interactive: Print log to STDOUT for easier debugging
 # -Unbrag: Remove greetings from footer
 param (
     [String]$Server = "*",
@@ -404,13 +404,19 @@ function LoadMailConfiguration() {
     # Loading the basic settings
     $MailConfiguration = @{}
     foreach ($Item in (Get-Content "$MailFile")) {
-        $Pair = $Item.ToLower().Split(":")
-        $MailConfiguration[$Pair[0].Trim()] = $Pair[1].Trim()
+        $Pair = $Item.Split(":")
+        $MailConfiguration[$Pair[0].ToLower().Trim()] = $Pair[1].Trim()
     }
-    
+
     # Getting the credentials
     $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
-    $Password = ConvertTo-SecureString -String $(if (-not $MailConfiguration["password"]) {"None"} else {$MailConfiguration["password"]}) -AsPlainText -Force
+    if (-not $MailConfiguration["password"]) {
+        $Password = ConvertTo-SecureString -String "" -AsPlainText -Force
+    }
+    else {
+        $Password = ConvertTo-SecureString -String $MailConfiguration["password"] -AsPlainText -Force
+    }
+
     $MailConfiguration["credentials"] = New-Object System.Management.Automation.PSCredential($Username,$Password)
 
     return $MailConfiguration
@@ -418,7 +424,7 @@ function LoadMailConfiguration() {
 
 # Sending a basic mail
 function MailNotification() {
-    param ( 
+    param (
         [Hashtable]$MailConfiguration,
         [String]$Issue,
         [String]$Body
@@ -426,7 +432,7 @@ function MailNotification() {
 
     # Sending the mail
     try {
-        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Issue" -credential $MailConfiguration["credentials"] -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -Body "$Body"
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "$Issue" -credential $MailConfiguration["credentials"] -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -useSSL -Body "$Body"
     }
     catch [Exception] {
         Log ("Sending mail failed: {0}" -f $_.ToString()) 2
@@ -436,15 +442,15 @@ function MailNotification() {
 
 # Sending a mail with the report(s) attached
 function MailReports() {
-    param ( 
-        [Hashtable]$MailSettings,
+    param (
+        [Hashtable]$MailConfiguration,
         [String]$Date,
-        [Array]$HTMLReports
+        [System.Collections.ArrayList]$HTMLReports
     )
 
     # Sending the mail
     try {
-        Send-MailMessage -From $MailSettings["sender"] -To $MailSettings["recipient"] -Subject "PingCastle Report(s) $Date" -credential $MailSettings["credentials"] -SmtpServer $MailSettings["server"] -Port $MailSettings["port"] -Attachments $HTMLReports
+        Send-MailMessage -From $MailConfiguration["sender"] -To $MailConfiguration["recipient"] -Subject "PingCastle Report(s) $Date" -credential $MailConfiguration["credentials"] -SmtpServer $MailConfiguration["server"] -Port $MailConfiguration["port"] -useSSL -Attachments $HTMLReports
     }
     catch [Exception] {
         Log ("Sending mail failed: {0}" -f $_.ToString()) 2
@@ -657,7 +663,7 @@ if ($Messages.Count -eq 0 -and -not $SendEmptyNotifications) {
 }
 # Notification if no (relevant) changes were detected
 elseif ($Messages.Count -eq 0) {
-    $Title = "&#x1F2755 PingCastle didn't detect any changes in the Active Directory Security! &#x1F2755"
+    $Title = "PingCastle didn't detect any changes in the Active Directory Security!"
     $Messages[0] = "<b> This doesn't mean your Active Directory is secure, but there were no changes to its security detected! Stay alert! </b>"
 }
 
