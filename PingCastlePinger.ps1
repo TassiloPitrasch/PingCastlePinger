@@ -409,7 +409,7 @@ function LoadMailConfiguration() {
     }
 
     # Getting the credentials
-    $Username = if (-not $MailConfiguration["username"]) {"None"} else {$MailConfiguration["username"]}
+    $Username = if (-not $MailConfiguration["username"]) {""} else {$MailConfiguration["username"]}
     if (-not $MailConfiguration["password"]) {
         $Password = ConvertTo-SecureString -String "" -AsPlainText -Force
     }
